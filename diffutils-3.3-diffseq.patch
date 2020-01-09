@@ -1,0 +1,208 @@
+diff -up diffutils-3.3/lib/diffseq.h.me diffutils-3.3/lib/diffseq.h
+--- diffutils-3.3/lib/diffseq.h.me	2018-08-10 14:26:48.940444056 +0200
++++ diffutils-3.3/lib/diffseq.h	2018-08-10 14:26:50.453439777 +0200
+@@ -138,12 +132,6 @@ struct partition
+   /* Midpoints of this partition.  */
+   OFFSET xmid;
+   OFFSET ymid;
+-
+-  /* True if low half will be analyzed minimally.  */
+-  bool lo_minimal;
+-
+-  /* Likewise for high half.  */
+-  bool hi_minimal;
+ };
+ 
+ 
+@@ -175,7 +156,7 @@ struct partition
+    suboptimal diff output.  It cannot cause incorrect diff output.  */
+ 
+ static void
+-diag (OFFSET xoff, OFFSET xlim, OFFSET yoff, OFFSET ylim, bool find_minimal,
++diag (OFFSET xoff, OFFSET xlim, OFFSET yoff, OFFSET ylim,
+       struct partition *part, struct context *ctxt)
+ {
+   OFFSET *const fd = ctxt->fdiag;       /* Give the compiler a chance. */
+@@ -235,7 +216,6 @@ diag (OFFSET xoff, OFFSET xlim, OFFSET y
+             {
+               part->xmid = x;
+               part->ymid = y;
+-              part->lo_minimal = part->hi_minimal = true;
+               return;
+             }
+         }
+@@ -268,14 +248,10 @@ diag (OFFSET xoff, OFFSET xlim, OFFSET y
+             {
+               part->xmid = x;
+               part->ymid = y;
+-              part->lo_minimal = part->hi_minimal = true;
+               return;
+             }
+         }
+ 
+-      if (find_minimal)
+-        continue;
+-
+ #ifdef USE_HEURISTIC
+       /* Heuristic: check occasionally for a diagonal that has made lots
+          of progress compared with the edit distance.  If we have any
+@@ -319,11 +295,7 @@ diag (OFFSET xoff, OFFSET xlim, OFFSET y
+                   }
+               }
+             if (best > 0)
+-              {
+-                part->lo_minimal = true;
+-                part->hi_minimal = false;
+-                return;
+-              }
++	      return;
+           }
+ 
+           {
+@@ -358,77 +330,10 @@ diag (OFFSET xoff, OFFSET xlim, OFFSET y
+                   }
+               }
+             if (best > 0)
+-              {
+-                part->lo_minimal = false;
+-                part->hi_minimal = true;
+-                return;
+-              }
++	      return;
+           }
+         }
+ #endif /* USE_HEURISTIC */
+-
+-      /* Heuristic: if we've gone well beyond the call of duty, give up
+-         and report halfway between our best results so far.  */
+-      if (c >= ctxt->too_expensive)
+-        {
+-          OFFSET fxybest;
+-          OFFSET fxbest IF_LINT (= 0);
+-          OFFSET bxybest;
+-          OFFSET bxbest IF_LINT (= 0);
+-
+-          /* Find forward diagonal that maximizes X + Y.  */
+-          fxybest = -1;
+-          for (d = fmax; d >= fmin; d -= 2)
+-            {
+-              OFFSET x = MIN (fd[d], xlim);
+-              OFFSET y = x - d;
+-              if (ylim < y)
+-                {
+-                  x = ylim + d;
+-                  y = ylim;
+-                }
+-              if (fxybest < x + y)
+-                {
+-                  fxybest = x + y;
+-                  fxbest = x;
+-                }
+-            }
+-
+-          /* Find backward diagonal that minimizes X + Y.  */
+-          bxybest = OFFSET_MAX;
+-          for (d = bmax; d >= bmin; d -= 2)
+-            {
+-              OFFSET x = MAX (xoff, bd[d]);
+-              OFFSET y = x - d;
+-              if (y < yoff)
+-                {
+-                  x = yoff + d;
+-                  y = yoff;
+-                }
+-              if (x + y < bxybest)
+-                {
+-                  bxybest = x + y;
+-                  bxbest = x;
+-                }
+-            }
+-
+-          /* Use the better of the two diagonals.  */
+-          if ((xlim + ylim) - bxybest < fxybest - (xoff + yoff))
+-            {
+-              part->xmid = fxbest;
+-              part->ymid = fxybest - fxbest;
+-              part->lo_minimal = true;
+-              part->hi_minimal = false;
+-            }
+-          else
+-            {
+-              part->xmid = bxbest;
+-              part->ymid = bxybest - bxbest;
+-              part->lo_minimal = false;
+-              part->hi_minimal = true;
+-            }
+-          return;
+-        }
+     }
+   #undef XREF_YREF_EQUAL
+ }
+@@ -452,7 +354,7 @@ diag (OFFSET xoff, OFFSET xlim, OFFSET y
+ 
+ static bool
+ compareseq (OFFSET xoff, OFFSET xlim, OFFSET yoff, OFFSET ylim,
+-            bool find_minimal, struct context *ctxt)
++            struct context *ctxt)
+ {
+ #ifdef ELEMENT
+   ELEMENT const *xv = ctxt->xvec; /* Help the compiler.  */
+@@ -498,12 +400,12 @@ compareseq (OFFSET xoff, OFFSET xlim, OF
+       struct partition part IF_LINT2 (= { .xmid = 0, .ymid = 0 });
+ 
+       /* Find a point of correspondence in the middle of the vectors.  */
+-      diag (xoff, xlim, yoff, ylim, find_minimal, &part, ctxt);
++      diag (xoff, xlim, yoff, ylim, &part, ctxt);
+ 
+       /* Use the partitions to split this problem into subproblems.  */
+-      if (compareseq (xoff, part.xmid, yoff, part.ymid, part.lo_minimal, ctxt))
++      if (compareseq (xoff, part.xmid, yoff, part.ymid, ctxt))
+         return true;
+-      if (compareseq (part.xmid, xlim, part.ymid, ylim, part.hi_minimal, ctxt))
++      if (compareseq (part.xmid, xlim, part.ymid, ylim, ctxt))
+         return true;
+     }
+ 
+diff -up diffutils-3.3/src/analyze.c.me diffutils-3.3/src/analyze.c
+--- diffutils-3.3/src/analyze.c.me	2018-08-10 14:06:53.473858743 +0200
++++ diffutils-3.3/src/analyze.c	2018-08-10 14:08:30.533579865 +0200
+@@ -542,7 +542,6 @@ diff_2_files (struct comparison *cmp)
+     {
+       struct context ctxt;
+       lin diags;
+-      lin too_expensive;
+ 
+       /* Allocate vectors for the results of comparison:
+ 	 a flag for each line of each file, saying whether that line
+@@ -574,18 +573,11 @@ diff_2_files (struct comparison *cmp)
+ 
+       ctxt.heuristic = speed_large_files;
+ 
+-      /* Set TOO_EXPENSIVE to be approximate square root of input size,
+-	 bounded below by 256.  */
+-      too_expensive = 1;
+-      for (;  diags != 0;  diags >>= 2)
+-	too_expensive <<= 1;
+-      ctxt.too_expensive = MAX (256, too_expensive);
+-
+       files[0] = cmp->file[0];
+       files[1] = cmp->file[1];
+ 
+       compareseq (0, cmp->file[0].nondiscarded_lines,
+-		  0, cmp->file[1].nondiscarded_lines, minimal, &ctxt);
++		  0, cmp->file[1].nondiscarded_lines, &ctxt);
+ 
+       free (ctxt.fdiag - (cmp->file[1].nondiscarded_lines + 1));
+ 
+diff -up diffutils-3.3/src/diff.h.me diffutils-3.3/src/diff.h
+--- diffutils-3.3/src/diff.h.me	2018-08-10 14:28:25.878169926 +0200
++++ diffutils-3.3/src/diff.h	2018-08-10 14:28:40.739127903 +0200
+@@ -376,7 +376,7 @@ extern void print_sdiff_script (struct c
+ extern char const change_letter[4];
+ extern char const pr_program[];
+ extern char *concat (char const *, char const *, char const *);
+-extern bool (*lines_differ) (char const *, size_t, char const *, size_t) _GL_ATTRIBUTE_PURE;
++extern bool (*lines_differ) (char const *, size_t, char const *, size_t);
+ extern bool lines_differ_singlebyte (char const *, size_t, char const *, size_t) _GL_ATTRIBUTE_PURE;
+ #ifdef HANDLE_MULTIBYTE
+ extern bool lines_differ_multibyte (char const *, size_t, char const *, size_t) _GL_ATTRIBUTE_PURE;
